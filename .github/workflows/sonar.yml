@@ -1,0 +1,51 @@
+name: SonarQube Cloud
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '16.20.2'
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci --legacy-peer-deps
+      - name: Compilar Angular
+        run: npm run build
+      - name: Ejecutar pruebas Cypress
+        run: |
+          npm start &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            curl -fsS http://localhost:8080/ >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/ >/dev/null
+          npx --no-install cypress run
+      - name: Analizar con SonarQube Cloud
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=GeroDavis_Angular-JumpStart
+            -Dsonar.organization=gerodavis
+            -Dsonar.sources=.
+            -Dsonar.tests=cypress
+            -Dsonar.exclusions=dist/**,node_modules/**,cypress/**,package-lock.json
